@@ -34,7 +34,14 @@ jobs:
         shell: pwsh
         run: |
           .\ffmpeg.exe -hide_banner -loglevel error -f lavfi -i testsrc=duration=2:size=640x360:rate=24 -f lavfi -i sine=duration=2 -c:v libx264 -profile:v main -c:a aac test.mp4
-          python compare_tool.py --analyse test.mp4
+          $env:PYTHONUTF8 = "1"
+          $out = python compare_tool.py --analyse test.mp4 2>&1
+          $code = $LASTEXITCODE
+          $out | Select-Object -First 40 | ForEach-Object { Write-Host $_ }
+          if ($code -ne 0) {
+            $out | Select-Object -Last 12 | ForEach-Object { Write-Host "::error title=essai::$_" }
+            exit $code
+          }
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
