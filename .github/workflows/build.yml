@@ -1,0 +1,56 @@
+name: exe
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: FFmpeg (ffmpeg.exe et ffprobe.exe)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ff
+          $bin = Get-ChildItem -Path ff -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          Copy-Item $bin.FullName ffmpeg.exe
+          Copy-Item (Join-Path $bin.DirectoryName "ffprobe.exe") ffprobe.exe
+          .\ffmpeg.exe -hide_banner -version | Select-Object -First 1
+          .\ffmpeg.exe -hide_banner -encoders | Select-String "libx264|libx265"
+      - name: Compilation de l'exe
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          python -m PyInstaller --onefile --noconsole --name PlexiPlay-MediaCheck --add-binary "ffmpeg.exe;." --add-binary "ffprobe.exe;." compare_tool.py
+          Get-ChildItem dist
+      - name: Essai de l'exe (analyse d'un fichier de test)
+        shell: pwsh
+        run: |
+          .\ffmpeg.exe -hide_banner -loglevel error -f lavfi -i testsrc=duration=2:size=640x360:rate=24 -f lavfi -i sine=duration=2 -c:v libx264 -profile:v main -c:a aac test.mp4
+          python compare_tool.py --analyse test.mp4
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: PlexiPlay-MediaCheck
+          retention-days: 3
+          path: dist/PlexiPlay-MediaCheck.exe
+      - name: Publier l'exe dans une release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ver = (Select-String -Path compare_tool.py -Pattern 'APP_VERSION = "([^"]+)"').Matches[0].Groups[1].Value
+          $tag = "v$ver"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag dist/PlexiPlay-MediaCheck.exe --clobber
+          } else {
+            gh release create $tag dist/PlexiPlay-MediaCheck.exe --target $env:GITHUB_SHA --title "PlexiPlay Media Check $ver" --notes "Utilitaire Windows : examine un fichier vidéo, le compare à un fichier qui fonctionne et le réencode à l'identique (FFmpeg inclus). Compilé automatiquement depuis le commit $($env:GITHUB_SHA.Substring(0,7))."
+          }
